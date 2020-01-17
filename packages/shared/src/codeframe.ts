@@ -1,5 +1,6 @@
 const range: number = 2
 
+// 生成代码帧
 export function generateCodeFrame(
   source: string,
   start = 0,

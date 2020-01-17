@@ -1,10 +1,12 @@
 # @vue/compiler-sfc
 
-> Lower level utilities for compiling Vue single file components
+> 用于编译Vue单个文件组件的低级实用程序
 
-This package contains lower level utilities that you can use if you are writing a plugin / transform for a bundler or module system that compiles Vue single file components into JavaScript. It is used in [vue-loader](https://github.com/vuejs/vue-loader).
 
-The API surface is intentionally minimal - the goal is to reuse as much as possible while being as flexible as possible.
+如果你写了一个插件或模块系统的插件/变换，您可以使用这个包含低水平功能的组件。[vue-loader](https://github.com/vuejs/vue-loader).
+
+
+API表面是故意最小的-目标是尽可能多地重复使用，同时尽可能灵活。
 
 ## API
 

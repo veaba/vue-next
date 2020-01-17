@@ -1,5 +1,8 @@
 // These tag configs are shared between compiler-dom and runtime-dom, so they
 // must be extracted in shared to avoid creating a dependency between the two.
+// 这些标记配置在编译器dom和运行时dom之间共享
+// 因此，必须在shared中提取它们，以避免在两者之间创建依赖关系。
+
 import { makeMap } from './makeMap'
 
 // https://developer.mozilla.org/en-US/docs/Web/HTML/Element
