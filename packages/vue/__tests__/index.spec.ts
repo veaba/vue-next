@@ -1,5 +1,5 @@
 import { createApp } from '../src'
-import { mockWarn } from '@vue/runtime-test'
+import { mockWarn } from '@vue/shared'
 
 describe('compiler + runtime integration', () => {
   mockWarn()
@@ -14,7 +14,7 @@ describe('compiler + runtime integration', () => {
         }
       }
     }
-    createApp().mount(App, container)
+    createApp(App).mount(container)
     expect(container.innerHTML).toBe(`0`)
   })
 
@@ -33,7 +33,7 @@ describe('compiler + runtime integration', () => {
         }
       }
     }
-    createApp().mount(App, container)
+    createApp(App).mount(container)
     expect(container.innerHTML).toBe(`0`)
   })
 
@@ -51,7 +51,7 @@ describe('compiler + runtime integration', () => {
         }
       }
     }
-    createApp().mount(App, container)
+    createApp(App).mount(container)
     expect(container.innerHTML).toBe(`0`)
   })
 
@@ -60,7 +60,7 @@ describe('compiler + runtime integration', () => {
     const App = {
       template: `<div v-if>`
     }
-    createApp().mount(App, container)
+    createApp(App).mount(container)
     expect(
       `Template compilation error: Element is missing end tag`
     ).toHaveBeenWarned()
@@ -78,26 +78,81 @@ describe('compiler + runtime integration', () => {
   })
 
   it('should support custom element', () => {
-    const app = createApp()
-    const container = document.createElement('div')
-    const App = {
+    const app = createApp({
       template: '<custom></custom>'
-    }
+    })
+    const container = document.createElement('div')
     app.config.isCustomElement = tag => tag === 'custom'
-    app.mount(App, container)
+    app.mount(container)
     expect(container.innerHTML).toBe('<custom></custom>')
   })
 
   it('should support using element innerHTML as template', () => {
-    const app = createApp()
+    const app = createApp({
+      data: () => ({
+        msg: 'hello'
+      })
+    })
     const container = document.createElement('div')
     container.innerHTML = '{{msg}}'
+    app.mount(container)
+    expect(container.innerHTML).toBe('hello')
+  })
+
+  it('should support selector of rootContainer', () => {
+    const container = document.createElement('div')
+    const origin = document.querySelector
+    document.querySelector = jest.fn().mockReturnValue(container)
+
     const App = {
-      data: {
-        msg: 'hello'
+      template: `{{ count }}`,
+      data() {
+        return {
+          count: 0
+        }
       }
     }
-    app.mount(App, container)
-    expect(container.innerHTML).toBe('hello')
+    createApp(App).mount('#app')
+    expect(container.innerHTML).toBe(`0`)
+    document.querySelector = origin
+  })
+
+  it('should warn when template is not avaiable', () => {
+    const app = createApp({
+      template: {}
+    })
+    const container = document.createElement('div')
+    app.mount(container)
+    expect('[Vue warn]: invalid template option:').toHaveBeenWarned()
+  })
+
+  it('should warn when template is is not found', () => {
+    const app = createApp({
+      template: '#not-exist-id'
+    })
+    const container = document.createElement('div')
+    app.mount(container)
+    expect(
+      '[Vue warn]: Template element not found or is empty: #not-exist-id'
+    ).toHaveBeenWarned()
+  })
+
+  it('should warn when container is not found', () => {
+    const origin = document.querySelector
+    document.querySelector = jest.fn().mockReturnValue(null)
+    const App = {
+      template: `{{ count }}`,
+      data() {
+        return {
+          count: 0
+        }
+      }
+    }
+    createApp(App).mount('#not-exist-id')
+
+    expect(
+      '[Vue warn]: Failed to mount app: mount target selector returned null.'
+    ).toHaveBeenWarned()
+    document.querySelector = origin
   })
 })
