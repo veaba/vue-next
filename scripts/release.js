@@ -7,7 +7,9 @@ const currentVersion = require('../package.json').version
 const { prompt } = require('enquirer')
 const execa = require('execa')
 
-const preId = args.preid || semver.prerelease(currentVersion)[0] || 'alpha'
+const preId =
+  args.preid ||
+  (semver.prerelease(currentVersion) && semver.prerelease(currentVersion)[0])
 const isDryRun = args.dry
 const skipTests = args.skipTests
 const skipBuild = args.skipBuild
@@ -21,10 +23,7 @@ const versionIncrements = [
   'patch',
   'minor',
   'major',
-  'prepatch',
-  'preminor',
-  'premajor',
-  'prerelease'
+  ...(preId ? ['prepatch', 'preminor', 'premajor', 'prerelease'] : [])
 ]
 
 const inc = i => semver.inc(currentVersion, i, preId)
@@ -79,7 +78,7 @@ async function main() {
   step('\nRunning tests...')
   if (!skipTests && !isDryRun) {
     await run(bin('jest'), ['--clearCache'])
-    await run('yarn', ['test', '--runInBand'])
+    await run('yarn', ['test'])
   } else {
     console.log(`(skipped)`)
   }

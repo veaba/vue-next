@@ -18,14 +18,19 @@ import {
   VNodeCall,
   TemplateTextChildNode,
   DirectiveArguments,
-  createVNodeCall
+  createVNodeCall,
+  ConstantTypes
 } from '../ast'
 import {
   PatchFlags,
   PatchFlagNames,
   isSymbol,
   isOn,
-  isObject
+  isObject,
+  isReservedProp,
+  capitalize,
+  camelize,
+  EMPTY_OBJ
 } from '@vue/shared'
 import { createCompilerError, ErrorCodes } from '../errors'
 import {
@@ -35,7 +40,9 @@ import {
   MERGE_PROPS,
   TO_HANDLERS,
   TELEPORT,
-  KEEP_ALIVE
+  KEEP_ALIVE,
+  SUSPENSE,
+  UNREF
 } from '../runtimeHelpers'
 import {
   getInnerRange,
@@ -43,10 +50,12 @@ import {
   findProp,
   isCoreComponent,
   isBindKey,
-  findDir
+  findDir,
+  isStaticExp
 } from '../utils'
 import { buildSlots } from './vSlot'
-import { getStaticType } from './hoistStatic'
+import { getConstantType } from './hoistStatic'
+import { BindingTypes } from '../options'
 
 // some directive transforms (e.g. v-model) may return a symbol for runtime
 // import, which should be used instead of a resolveDirective call.
@@ -88,6 +97,8 @@ export const transformElement: NodeTransform = (node, context) => {
     let shouldUseBlock =
       // dynamic component may resolve to plain elements
       isDynamicComponent ||
+      vnodeTag === TELEPORT ||
+      vnodeTag === SUSPENSE ||
       (!isComponent &&
         // <svg> and <foreignObject> must be forced into blocks so that block
         // updates inside get proper isSVG flag at runtime. (#639, #643)
@@ -156,7 +167,10 @@ export const transformElement: NodeTransform = (node, context) => {
         const hasDynamicTextChild =
           type === NodeTypes.INTERPOLATION ||
           type === NodeTypes.COMPOUND_EXPRESSION
-        if (hasDynamicTextChild && !getStaticType(child)) {
+        if (
+          hasDynamicTextChild &&
+          getConstantType(child) === ConstantTypes.NOT_CONSTANT
+        ) {
           patchFlag |= PatchFlags.TEXT
         }
         // pass directly if the only child is a text node
@@ -235,12 +249,44 @@ export function resolveComponentType(
   const builtIn = isCoreComponent(tag) || context.isBuiltInComponent(tag)
   if (builtIn) {
     // built-ins are simply fallthroughs / have special handling during ssr
-    // no we don't need to import their runtime equivalents
+    // so we don't need to import their runtime equivalents
     if (!ssr) context.helper(builtIn)
     return builtIn
   }
 
-  // 3. user component (resolve)
+  // 3. user component (from setup bindings)
+  const bindings = context.bindingMetadata
+  if (bindings !== EMPTY_OBJ) {
+    const checkType = (type: BindingTypes) => {
+      let resolvedTag = tag
+      if (
+        bindings[resolvedTag] === type ||
+        bindings[(resolvedTag = camelize(tag))] === type ||
+        bindings[(resolvedTag = capitalize(camelize(tag)))] === type
+      ) {
+        return resolvedTag
+      }
+    }
+    const tagFromConst = checkType(BindingTypes.SETUP_CONST)
+    if (tagFromConst) {
+      return context.inline
+        ? // in inline mode, const setup bindings (e.g. imports) can be used as-is
+          tagFromConst
+        : `$setup[${JSON.stringify(tagFromConst)}]`
+    }
+    const tagFromSetup =
+      checkType(BindingTypes.SETUP_LET) ||
+      checkType(BindingTypes.SETUP_REF) ||
+      checkType(BindingTypes.SETUP_MAYBE_REF)
+    if (tagFromSetup) {
+      return context.inline
+        ? // setup scope bindings that may be refs need to be unrefed
+          `${context.helperString(UNREF)}(${tagFromSetup})`
+        : `$setup[${JSON.stringify(tagFromSetup)}]`
+    }
+  }
+
+  // 4. user component (resolve)
   context.helper(RESOLVE_COMPONENT)
   context.components.add(tag)
   return toValidAssetId(tag, `component`)
@@ -272,27 +318,36 @@ export function buildProps(
   let hasStyleBinding = false
   let hasHydrationEventBinding = false
   let hasDynamicKeys = false
+  let hasVnodeHook = false
   const dynamicPropNames: string[] = []
 
   const analyzePatchFlag = ({ key, value }: Property) => {
-    if (key.type === NodeTypes.SIMPLE_EXPRESSION && key.isStatic) {
+    if (isStaticExp(key)) {
       const name = key.content
+      const isEventHandler = isOn(name)
       if (
         !isComponent &&
-        isOn(name) &&
-        // omit the flag for click handlers becaues hydration gives click
+        isEventHandler &&
+        // omit the flag for click handlers because hydration gives click
         // dedicated fast path.
         name.toLowerCase() !== 'onclick' &&
         // omit v-model handlers
-        name !== 'onUpdate:modelValue'
+        name !== 'onUpdate:modelValue' &&
+        // omit onVnodeXXX hooks
+        !isReservedProp(name)
       ) {
         hasHydrationEventBinding = true
       }
+
+      if (isEventHandler && isReservedProp(name)) {
+        hasVnodeHook = true
+      }
+
       if (
         value.type === NodeTypes.JS_CACHE_EXPRESSION ||
         ((value.type === NodeTypes.SIMPLE_EXPRESSION ||
           value.type === NodeTypes.COMPOUND_EXPRESSION) &&
-          getStaticType(value) > 0)
+          getConstantType(value) > 0)
       ) {
         // skip if the prop is a cached handler or has constant value
         return
@@ -316,8 +371,15 @@ export function buildProps(
     const prop = props[i]
     if (prop.type === NodeTypes.ATTRIBUTE) {
       const { loc, name, value } = prop
+      let isStatic = true
       if (name === 'ref') {
         hasRef = true
+        // in inline mode there is no setupState object, so we can't use string
+        // keys to set the ref. Instead, we need to transform it to pass the
+        // acrtual ref instead.
+        if (!__BROWSER__ && context.inline) {
+          isStatic = false
+        }
       }
       // skip :is on <component>
       if (name === 'is' && tag === 'component') {
@@ -332,7 +394,7 @@ export function buildProps(
           ),
           createSimpleExpression(
             value ? value.content : '',
-            true,
+            isStatic,
             value ? value.loc : loc
           )
         )
@@ -466,7 +528,7 @@ export function buildProps(
   }
   if (
     (patchFlag === 0 || patchFlag === PatchFlags.HYDRATE_EVENTS) &&
-    (hasRef || runtimeDirectives.length > 0)
+    (hasRef || hasVnodeHook || runtimeDirectives.length > 0)
   ) {
     patchFlag |= PatchFlags.NEED_PATCH
   }

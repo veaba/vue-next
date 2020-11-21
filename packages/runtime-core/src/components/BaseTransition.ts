@@ -8,13 +8,14 @@ import {
   Comment,
   isSameVNodeType,
   VNode,
-  VNodeArrayChildren
+  VNodeArrayChildren,
+  Fragment
 } from '../vnode'
 import { warn } from '../warning'
 import { isKeepAlive } from './KeepAlive'
 import { toRaw } from '@vue/reactivity'
 import { callWithAsyncErrorHandling, ErrorCodes } from '../errorHandling'
-import { ShapeFlags } from '@vue/shared'
+import { ShapeFlags, PatchFlags } from '@vue/shared'
 import { onBeforeUnmount, onMounted } from '../apiLifecycle'
 import { RendererElement } from '../renderer'
 
@@ -51,10 +52,13 @@ export interface BaseTransitionProps<HostElement = RendererElement> {
 export interface TransitionHooks<
   HostElement extends RendererElement = RendererElement
 > {
+  mode: BaseTransitionProps['mode']
   persisted: boolean
   beforeEnter(el: HostElement): void
   enter(el: HostElement): void
   leave(el: HostElement, remove: () => void): void
+  clone(vnode: VNode): TransitionHooks<HostElement>
+  // optional
   afterLeave?(): void
   delayLeave?(
     el: HostElement,
@@ -104,38 +108,41 @@ export function useTransitionState(): TransitionState {
   return state
 }
 
+const TransitionHookValidator = [Function, Array]
+
 const BaseTransitionImpl = {
   name: `BaseTransition`,
-
-  inheritRef: true,
 
   props: {
     mode: String,
     appear: Boolean,
     persisted: Boolean,
     // enter
-    onBeforeEnter: Function,
-    onEnter: Function,
-    onAfterEnter: Function,
-    onEnterCancelled: Function,
+    onBeforeEnter: TransitionHookValidator,
+    onEnter: TransitionHookValidator,
+    onAfterEnter: TransitionHookValidator,
+    onEnterCancelled: TransitionHookValidator,
     // leave
-    onBeforeLeave: Function,
-    onLeave: Function,
-    onAfterLeave: Function,
-    onLeaveCancelled: Function,
+    onBeforeLeave: TransitionHookValidator,
+    onLeave: TransitionHookValidator,
+    onAfterLeave: TransitionHookValidator,
+    onLeaveCancelled: TransitionHookValidator,
     // appear
-    onBeforeAppear: Function,
-    onAppear: Function,
-    onAfterAppear: Function,
-    onAppearCancelled: Function
+    onBeforeAppear: TransitionHookValidator,
+    onAppear: TransitionHookValidator,
+    onAfterAppear: TransitionHookValidator,
+    onAppearCancelled: TransitionHookValidator
   },
 
   setup(props: BaseTransitionProps, { slots }: SetupContext) {
     const instance = getCurrentInstance()!
     const state = useTransitionState()
 
+    let prevTransitionKey: any
+
     return () => {
-      const children = slots.default && slots.default()
+      const children =
+        slots.default && getTransitionRawChildren(slots.default(), true)
       if (!children || !children.length) {
         return
       }
@@ -170,20 +177,34 @@ const BaseTransitionImpl = {
         return emptyPlaceholder(child)
       }
 
-      const enterHooks = (innerChild.transition = resolveTransitionHooks(
+      const enterHooks = resolveTransitionHooks(
         innerChild,
         rawProps,
         state,
         instance
-      ))
+      )
+      setTransitionHooks(innerChild, enterHooks)
 
       const oldChild = instance.subTree
       const oldInnerChild = oldChild && getKeepAliveChild(oldChild)
+
+      let transitionKeyChanged = false
+      const { getTransitionKey } = innerChild.type as any
+      if (getTransitionKey) {
+        const key = getTransitionKey()
+        if (prevTransitionKey === undefined) {
+          prevTransitionKey = key
+        } else if (key !== prevTransitionKey) {
+          prevTransitionKey = key
+          transitionKeyChanged = true
+        }
+      }
+
       // handle mode
       if (
         oldInnerChild &&
         oldInnerChild.type !== Comment &&
-        !isSameVNodeType(innerChild, oldInnerChild)
+        (!isSameVNodeType(innerChild, oldInnerChild) || transitionKeyChanged)
       ) {
         const leavingHooks = resolveTransitionHooks(
           oldInnerChild,
@@ -254,8 +275,13 @@ function getLeavingNodesForType(
 // and will be called at appropriate timing in the renderer.
 export function resolveTransitionHooks(
   vnode: VNode,
-  {
+  props: BaseTransitionProps<any>,
+  state: TransitionState,
+  instance: ComponentInternalInstance
+): TransitionHooks {
+  const {
     appear,
+    mode,
     persisted = false,
     onBeforeEnter,
     onEnter,
@@ -269,10 +295,7 @@ export function resolveTransitionHooks(
     onAppear,
     onAfterAppear,
     onAppearCancelled
-  }: BaseTransitionProps<any>,
-  state: TransitionState,
-  instance: ComponentInternalInstance
-): TransitionHooks {
+  } = props
   const key = String(vnode.key)
   const leavingVNodesCache = getLeavingNodesForType(state, vnode)
 
@@ -287,6 +310,7 @@ export function resolveTransitionHooks(
   }
 
   const hooks: TransitionHooks<TransitionElement> = {
+    mode,
     persisted,
     beforeEnter(el) {
       let hook = onBeforeEnter
@@ -384,6 +408,10 @@ export function resolveTransitionHooks(
       } else {
         done()
       }
+    },
+
+    clone(vnode) {
+      return resolveTransitionHooks(vnode, props, state, instance)
     }
   }
 
@@ -413,7 +441,42 @@ function getKeepAliveChild(vnode: VNode): VNode | undefined {
 export function setTransitionHooks(vnode: VNode, hooks: TransitionHooks) {
   if (vnode.shapeFlag & ShapeFlags.COMPONENT && vnode.component) {
     setTransitionHooks(vnode.component.subTree, hooks)
+  } else if (__FEATURE_SUSPENSE__ && vnode.shapeFlag & ShapeFlags.SUSPENSE) {
+    vnode.ssContent!.transition = hooks.clone(vnode.ssContent!)
+    vnode.ssFallback!.transition = hooks.clone(vnode.ssFallback!)
   } else {
     vnode.transition = hooks
   }
+}
+
+export function getTransitionRawChildren(
+  children: VNode[],
+  keepComment: boolean = false
+): VNode[] {
+  let ret: VNode[] = []
+  let keyedFragmentCount = 0
+  for (let i = 0; i < children.length; i++) {
+    const child = children[i]
+    // handle fragment children case, e.g. v-for
+    if (child.type === Fragment) {
+      if (child.patchFlag & PatchFlags.KEYED_FRAGMENT) keyedFragmentCount++
+      ret = ret.concat(
+        getTransitionRawChildren(child.children as VNode[], keepComment)
+      )
+    }
+    // comment placeholders should be skipped, e.g. v-if
+    else if (keepComment || child.type !== Comment) {
+      ret.push(child)
+    }
+  }
+  // #1126 if a transition children list contains multiple sub fragments, these
+  // fragments will be merged into a flat children array. Since each v-for
+  // fragment may contain different static bindings inside, we need to de-top
+  // these children to force full diffs to ensure correct behavior.
+  if (keyedFragmentCount > 1) {
+    for (let i = 0; i < ret.length; i++) {
+      ret[i].patchFlag = PatchFlags.BAIL
+    }
+  }
+  return ret
 }

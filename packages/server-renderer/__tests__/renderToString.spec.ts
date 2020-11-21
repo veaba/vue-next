@@ -10,12 +10,10 @@ import {
   createTextVNode,
   createStaticVNode
 } from 'vue'
-import { escapeHtml, mockWarn } from '@vue/shared'
+import { escapeHtml } from '@vue/shared'
 import { renderToString } from '../src/renderToString'
 import { ssrRenderSlot, SSRSlot } from '../src/helpers/ssrRenderSlot'
 import { ssrRenderComponent } from '../src/helpers/ssrRenderComponent'
-
-mockWarn()
 
 describe('ssr: renderToString', () => {
   test('should apply app context', async () => {
@@ -141,6 +139,24 @@ describe('ssr: renderToString', () => {
 
       expect(await renderToString(app)).toBe(
         `<div>parent<div>hello</div></div>`
+      )
+    })
+
+    test('template components with dynamic class attribute after static', async () => {
+      const app = createApp({
+        template: `<div><div class="child" :class="'dynamic'"></div></div>`
+      })
+      expect(await renderToString(app)).toBe(
+        `<div><div class="dynamic child"></div></div>`
+      )
+    })
+
+    test('template components with dynamic class attribute before static', async () => {
+      const app = createApp({
+        template: `<div><div :class="'dynamic'" class="child"></div></div>`
+      })
+      expect(await renderToString(app)).toBe(
+        `<div><div class="dynamic child"></div></div>`
       )
     })
 
@@ -554,7 +570,7 @@ describe('ssr: renderToString', () => {
       }
 
       expect(await renderToString(h(Parent))).toBe(
-        `<div data-v-test data-v-child><span data-v-test data-v-child-s>slot</span></div>`
+        `<div data-v-child data-v-test><span data-v-test data-v-child-s>slot</span></div>`
       )
     })
   })
@@ -582,5 +598,24 @@ describe('ssr: renderToString', () => {
           '   |   ^'
       ).toHaveBeenWarned()
     })
+  })
+
+  test('serverPrefetch', async () => {
+    const msg = Promise.resolve('hello')
+    const app = createApp({
+      data() {
+        return {
+          msg: ''
+        }
+      },
+      async serverPrefetch() {
+        this.msg = await msg
+      },
+      render() {
+        return h('div', this.msg)
+      }
+    })
+    const html = await renderToString(app)
+    expect(html).toBe(`<div>hello</div>`)
   })
 })

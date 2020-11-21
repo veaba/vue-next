@@ -5,7 +5,8 @@ import {
   DirectiveNode,
   NodeTypes,
   CompilerOptions,
-  InterpolationNode
+  InterpolationNode,
+  ConstantTypes
 } from '../../src'
 import { transformIf } from '../../src/transforms/vIf'
 import { transformExpression } from '../../src/transforms/transformExpression'
@@ -408,11 +409,11 @@ describe('compiler: expression transform', () => {
         type: NodeTypes.SIMPLE_EXPRESSION,
         content: `13000n`,
         isStatic: false,
-        isConstant: true
+        constType: ConstantTypes.CAN_STRINGIFY
       })
     })
 
-    test('nullish colescing', () => {
+    test('nullish coalescing', () => {
       const node = parseWithExpressionTransform(
         `{{ a ?? b }}`
       ) as InterpolationNode
