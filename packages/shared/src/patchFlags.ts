@@ -16,7 +16,7 @@
 //   const flag = TEXT | CLASS
 //   if (flag & TEXT) { ... }
 //
-// Check the `patchElement` function in './createRenderer.ts' to see how the
+// Check the `patchElement` function in './renderer.ts' to see how the
 // flags are handled during diff.
 // 检查“./createRenderer.ts”中的“patchElement”函数，查看在diff期间如何处理标志。
 
@@ -58,12 +58,9 @@ export const enum PatchFlags {
   // 指定带有带有动态键的属性的元素。当Keys更改时，总是需要一个完整的diff来删除旧key。此标志与CLASS、STYLE和PROPS互斥。
   FULL_PROPS = 1 << 4,
 
-  // Indicates an element that only needs non-props patching, e.g. ref or
-  // directives (onVnodeXXX hooks). It simply marks the vnode as "need patch",
-  // since every patched vnode checks for refs and onVnodeXXX hooks.
-  // This flag is never directly matched against, it simply serves as a non-zero
-  // value.
-  NEED_PATCH = 1 << 5,
+  // Indicates an element with event listeners (which need to be attached
+  // during hydration)
+  HYDRATE_EVENTS = 1 << 5,
 
   // Indicates a fragment whose children order doesn't change.
   STABLE_FRAGMENT = 1 << 6,
@@ -74,31 +71,34 @@ export const enum PatchFlags {
   // Indicates a fragment with unkeyed children.
   UNKEYED_FRAGMENT = 1 << 8,
 
+  // Indicates an element that only needs non-props patching, e.g. ref or
+  // directives (onVnodeXXX hooks). since every patched vnode checks for refs
+  // and onVnodeXXX hooks, it simply marks the vnode so that a parent block
+  // will track it.
+  NEED_PATCH = 1 << 9,
+
   // Indicates a component with dynamic slots (e.g. slot that references a v-for
   // iterated value, or dynamic slot names).
   // Components with this flag are always force updated.
-  DYNAMIC_SLOTS = 1 << 9,
+  DYNAMIC_SLOTS = 1 << 10,
+
+  // SPECIAL FLAGS -------------------------------------------------------------
+
+  // Special flags are negative integers. They are never matched against using
+  // bitwise operators (bitwise matching should only happen in branches where
+  // patchFlag > 0), and are mutually exclusive. When checking for a special
+  // flag, simply check patchFlag === FLAG.
+
+  // Indicates a hoisted static vnode. This is a hint for hydration to skip
+  // the entire sub tree since static content never needs to be updated.
+  HOISTED = -1,
 
   // A special flag that indicates that the diffing algorithm should bail out
-  // of optimized mode. This is only on block fragments created by renderSlot()
+  // of optimized mode. For example, on block fragments created by renderSlot()
   // when encountering non-compiler generated slots (i.e. manually written
   // render functions, which should always be fully diffed)
-  BAIL = -1
-}
-
-// runtime object for public consumption
-// 公开消费的runtime 的对象
-export const PublicPatchFlags = {
-  TEXT: PatchFlags.TEXT,
-  CLASS: PatchFlags.CLASS,
-  STYLE: PatchFlags.STYLE,
-  PROPS: PatchFlags.PROPS,
-  NEED_PATCH: PatchFlags.NEED_PATCH,
-  FULL_PROPS: PatchFlags.FULL_PROPS,
-  KEYED_FRAGMENT: PatchFlags.KEYED_FRAGMENT,
-  UNKEYED_FRAGMENT: PatchFlags.UNKEYED_FRAGMENT,
-  DYNAMIC_SLOTS: PatchFlags.DYNAMIC_SLOTS,
-  BAIL: PatchFlags.BAIL
+  // OR manually cloneVNodes
+  BAIL = -2
 }
 
 // dev only flag -> name mapping
@@ -107,11 +107,13 @@ export const PatchFlagNames = {
   [PatchFlags.CLASS]: `CLASS`,
   [PatchFlags.STYLE]: `STYLE`,
   [PatchFlags.PROPS]: `PROPS`,
-  [PatchFlags.NEED_PATCH]: `NEED_PATCH`,
   [PatchFlags.FULL_PROPS]: `FULL_PROPS`,
+  [PatchFlags.HYDRATE_EVENTS]: `HYDRATE_EVENTS`,
   [PatchFlags.STABLE_FRAGMENT]: `STABLE_FRAGMENT`,
   [PatchFlags.KEYED_FRAGMENT]: `KEYED_FRAGMENT`,
   [PatchFlags.UNKEYED_FRAGMENT]: `UNKEYED_FRAGMENT`,
   [PatchFlags.DYNAMIC_SLOTS]: `DYNAMIC_SLOTS`,
+  [PatchFlags.NEED_PATCH]: `NEED_PATCH`,
+  [PatchFlags.HOISTED]: `HOISTED`,
   [PatchFlags.BAIL]: `BAIL`
 }

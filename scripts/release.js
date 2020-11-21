@@ -7,7 +7,9 @@ const currentVersion = require('../package.json').version
 const { prompt } = require('enquirer')
 const execa = require('execa')
 
-const preId = args.preid || semver.prerelease(currentVersion)[0] || 'alpha'
+const preId =
+  args.preid ||
+  (semver.prerelease(currentVersion) && semver.prerelease(currentVersion)[0])
 const isDryRun = args.dry
 const skipTests = args.skipTests
 const skipBuild = args.skipBuild
@@ -15,16 +17,13 @@ const packages = fs
   .readdirSync(path.resolve(__dirname, '../packages'))
   .filter(p => !p.endsWith('.ts') && !p.startsWith('.'))
 
-const skippedPackages = ['server-renderer']
+const skippedPackages = []
 
 const versionIncrements = [
   'patch',
   'minor',
   'major',
-  'prepatch',
-  'preminor',
-  'premajor',
-  'prerelease'
+  ...(preId ? ['prepatch', 'preminor', 'premajor', 'prerelease'] : [])
 ]
 
 const inc = i => semver.inc(currentVersion, i, preId)
@@ -94,7 +93,7 @@ async function main() {
     await run('yarn', ['build', '--release'])
     // test generated dts files
     step('\nVerifying type declarations...')
-    await run(bin('tsd'))
+    await run('yarn', ['test-dts-only'])
   } else {
     console.log(`(skipped)`)
   }
@@ -184,10 +183,10 @@ async function publishPackage(pkgName, version, runIfNotDry) {
 
   // for now (alpha/beta phase), every package except "vue" can be published as
   // `latest`, whereas "vue" will be published under the "next" tag.
-  const releaseTag = pkgName === 'vue' ? 'next' : 'latest'
+  const releaseTag = pkgName === 'vue' ? 'next' : null
 
   // TODO use inferred release channel after official 3.0 release
-  // const releaseTag = semver.prerelease(version)[0] || 'latest'
+  // const releaseTag = semver.prerelease(version)[0] || null
 
   step(`Publishing ${pkgName}...`)
   try {
@@ -197,8 +196,7 @@ async function publishPackage(pkgName, version, runIfNotDry) {
         'publish',
         '--new-version',
         version,
-        '--tag',
-        releaseTag,
+        ...(releaseTag ? ['--tag', releaseTag] : []),
         '--access',
         'public'
       ],
