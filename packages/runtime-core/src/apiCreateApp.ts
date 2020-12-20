@@ -1,14 +1,23 @@
-import { Component, Data, validateComponentName } from './component'
-import { ComponentOptions } from './apiOptions'
-import { ComponentPublicInstance } from './componentProxy'
+import {
+  ConcreteComponent,
+  Data,
+  validateComponentName,
+  Component
+} from './component'
+import { ComponentOptions } from './componentOptions'
+import { ComponentPublicInstance } from './componentPublicInstance'
 import { Directive, validateDirectiveName } from './directives'
 import { RootRenderFunction } from './renderer'
 import { InjectionKey } from './apiInject'
 import { isFunction, NO, isObject } from '@vue/shared'
 import { warn } from './warning'
-import { createVNode, cloneVNode } from './vnode'
+import { createVNode, cloneVNode, VNode } from './vnode'
+import { RootHydrateFunction } from './hydration'
+import { devtoolsInitApp, devtoolsUnmountApp } from './devtools'
+import { version } from '.'
 
 export interface App<HostElement = any> {
+  version: string
   config: AppConfig
   use(plugin: Plugin, ...options: any[]): this
   mixin(mixin: ComponentOptions): this
@@ -17,23 +26,37 @@ export interface App<HostElement = any> {
   directive(name: string): Directive | undefined
   directive(name: string, directive: Directive): this
   mount(
-    rootComponent:
-      | Component
-      // for compatibility with defineComponent() return types
-      | { new (): ComponentPublicInstance<any, any, any, any, any> },
     rootContainer: HostElement | string,
-    rootProps?: Data
+    isHydrate?: boolean
   ): ComponentPublicInstance
+  unmount(rootContainer: HostElement | string): void
   provide<T>(key: InjectionKey<T> | string, value: T): this
+
+  // internal, but we need to expose these for the server-renderer and devtools
+  _uid: number
+  _component: ConcreteComponent
+  _props: Data | null
+  _container: HostElement | null
+  _context: AppContext
 }
 
+export type OptionMergeFunction = (
+  to: unknown,
+  from: unknown,
+  instance: any,
+  key: string
+) => any
+
 export interface AppConfig {
-  devtools: boolean
-  performance: boolean
+  // @private
   readonly isNativeTag?: (tag: string) => boolean
-  isCustomElement?: (tag: string) => boolean
+
+  performance: boolean
+  optionMergeStrategies: Record<string, OptionMergeFunction>
+  globalProperties: Record<string, any>
+  isCustomElement: (tag: string) => boolean
   errorHandler?: (
-    err: Error,
+    err: unknown,
     instance: ComponentPublicInstance | null,
     info: string
   ) => void
@@ -45,12 +68,22 @@ export interface AppConfig {
 }
 
 export interface AppContext {
+  app: App // for devtools
   config: AppConfig
   mixins: ComponentOptions[]
   components: Record<string, Component>
   directives: Record<string, Directive>
   provides: Record<string | symbol, any>
-  reload?: () => void // HMR only
+  /**
+   * Flag for de-optimizing props normalization
+   * @internal
+   */
+  deopt?: boolean
+  /**
+   * HMR only
+   * @internal
+   */
+  reload?: () => void
 }
 
 type PluginInstallFunction = (app: App, ...options: any[]) => any
@@ -63,10 +96,12 @@ export type Plugin =
 
 export function createAppContext(): AppContext {
   return {
+    app: null as any,
     config: {
-      devtools: true,
-      performance: false,
       isNativeTag: NO,
+      performance: false,
+      globalProperties: {},
+      optionMergeStrategies: {},
       isCustomElement: NO,
       errorHandler: undefined,
       warnHandler: undefined
@@ -74,20 +109,41 @@ export function createAppContext(): AppContext {
     mixins: [],
     components: {},
     directives: {},
-    provides: {}
+    provides: Object.create(null)
   }
 }
 
-export function createAppAPI<HostNode, HostElement>(
-  render: RootRenderFunction<HostNode, HostElement>
-): () => App<HostElement> {
-  return function createApp(): App {
+export type CreateAppFunction<HostElement> = (
+  rootComponent: Component,
+  rootProps?: Data | null
+) => App<HostElement>
+
+let uid = 0
+
+export function createAppAPI<HostElement>(
+  render: RootRenderFunction,
+  hydrate?: RootHydrateFunction
+): CreateAppFunction<HostElement> {
+  return function createApp(rootComponent, rootProps = null) {
+    if (rootProps != null && !isObject(rootProps)) {
+      __DEV__ && warn(`root props passed to app.mount() must be an object.`)
+      rootProps = null
+    }
+
     const context = createAppContext()
     const installedPlugins = new Set()
 
     let isMounted = false
 
-    const app: App = {
+    const app: App = (context.app = {
+      _uid: uid++,
+      _component: rootComponent as ConcreteComponent,
+      _props: rootProps,
+      _container: null,
+      _context: context,
+
+      version,
+
       get config() {
         return context.config
       },
@@ -119,19 +175,23 @@ export function createAppAPI<HostNode, HostElement>(
       },
 
       mixin(mixin: ComponentOptions) {
-        if (__DEV__ && !__FEATURE_OPTIONS__) {
+        if (__FEATURE_OPTIONS_API__) {
+          if (!context.mixins.includes(mixin)) {
+            context.mixins.push(mixin)
+            // global mixin with props/emits de-optimizes props/emits
+            // normalization caching.
+            if (mixin.props || mixin.emits) {
+              context.deopt = true
+            }
+          } else if (__DEV__) {
+            warn(
+              'Mixin has already been applied to target app' +
+                (mixin.name ? `: ${mixin.name}` : '')
+            )
+          }
+        } else if (__DEV__) {
           warn('Mixins are only available in builds supporting Options API')
         }
-
-        if (!context.mixins.includes(mixin)) {
-          context.mixins.push(mixin)
-        } else if (__DEV__) {
-          warn(
-            'Mixin has already been applied to target app' +
-              (mixin.name ? `: ${mixin.name}` : '')
-          )
-        }
-
         return app
       },
 
@@ -164,43 +224,63 @@ export function createAppAPI<HostNode, HostElement>(
         return app
       },
 
-      mount(
-        rootComponent: Component,
-        rootContainer: HostElement,
-        rootProps?: Data | null
-      ): any {
+      mount(rootContainer: HostElement, isHydrate?: boolean): any {
         if (!isMounted) {
-          if (rootProps != null && !isObject(rootProps)) {
-            __DEV__ &&
-              warn(`root props passed to app.mount() must be an object.`)
-            rootProps = null
-          }
-          const vnode = createVNode(rootComponent, rootProps)
+          const vnode = createVNode(
+            rootComponent as ConcreteComponent,
+            rootProps
+          )
           // store app context on the root VNode.
           // this will be set on the root instance on initial mount.
           vnode.appContext = context
 
           // HMR root reload
-          if (__BUNDLER__ && __DEV__) {
+          if (__DEV__) {
             context.reload = () => {
               render(cloneVNode(vnode), rootContainer)
             }
           }
 
-          render(vnode, rootContainer)
+          if (isHydrate && hydrate) {
+            hydrate(vnode as VNode<Node, Element>, rootContainer as any)
+          } else {
+            render(vnode, rootContainer)
+          }
           isMounted = true
+          app._container = rootContainer
+          // for devtools and telemetry
+          ;(rootContainer as any).__vue_app__ = app
+
+          if (__DEV__ || __FEATURE_PROD_DEVTOOLS__) {
+            devtoolsInitApp(app, version)
+          }
+
           return vnode.component!.proxy
         } else if (__DEV__) {
           warn(
-            `App has already been mounted. Create a new app instance instead.`
+            `App has already been mounted.\n` +
+              `If you want to remount the same app, move your app creation logic ` +
+              `into a factory function and create fresh app instances for each ` +
+              `mount - e.g. \`const createMyApp = () => createApp(App)\``
           )
         }
       },
 
+      unmount() {
+        if (isMounted) {
+          render(null, app._container)
+          if (__DEV__ || __FEATURE_PROD_DEVTOOLS__) {
+            devtoolsUnmountApp(app)
+          }
+        } else if (__DEV__) {
+          warn(`Cannot unmount an app that is not mounted.`)
+        }
+      },
+
       provide(key, value) {
-        if (__DEV__ && key in context.provides) {
+        if (__DEV__ && (key as string | symbol) in context.provides) {
           warn(
-            `App already provides property with key "${key}". ` +
+            `App already provides property with key "${String(key)}". ` +
               `It will be overwritten with the new value.`
           )
         }
@@ -210,7 +290,7 @@ export function createAppAPI<HostNode, HostElement>(
 
         return app
       }
-    }
+    })
 
     return app
   }
