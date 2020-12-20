@@ -12,7 +12,7 @@ interface Invoker extends EventListener {
 
 type EventValue = Function | Function[]
 
-// Async edge case fix requires storing an event listener's attach timestamp.
+// 异步边缘大小写修复需要存储事件侦听器的附加时间戳。
 let _getNow: () => number = Date.now
 
 // Determine what event timestamp the browser is using. Annoyingly, the
@@ -55,7 +55,7 @@ export function removeEventListener(
 ) {
   el.removeEventListener(event, handler, options)
 }
-
+// 事件补丁
 export function patchEvent(
   el: Element & { _vei?: Record<string, Invoker | undefined> },
   rawName: string,
@@ -93,7 +93,6 @@ function parseName(name: string): [string, EventListenerOptions | undefined] {
     while ((m = name.match(optionsModifierRE))) {
       name = name.slice(0, name.length - m[0].length)
       ;(options as any)[m[0].toLowerCase()] = true
-      options
     }
   }
   return [name.slice(2).toLowerCase(), options]

@@ -75,15 +75,17 @@ import { ComponentPublicInstance } from './componentPublicInstance'
 import { devtoolsComponentRemoved, devtoolsComponentUpdated } from './devtools'
 import { initFeatureFlags } from './featureFlags'
 
+// TODO：泛型接口，但是这个 `=` 什么意思呢
 export interface Renderer<HostElement = RendererElement> {
   render: RootRenderFunction<HostElement>
   createApp: CreateAppFunction<HostElement>
 }
 
+// extends 是关键词，继承 Renderer<Element>
 export interface HydrationRenderer extends Renderer<Element> {
   hydrate: RootHydrateFunction
 }
-
+// TODO: `<HostElement = RendererElement> `？赋值的意思吗？
 export type RootRenderFunction<HostElement = RendererElement> = (
   vnode: VNode | null,
   container: HostElement

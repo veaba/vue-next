@@ -1,10 +1,9 @@
 // __UNSAFE__
-// Reason: potentially setting innerHTML.
-// This can come from explicit usage of v-html or innerHTML as a prop in render
-
+// 原因: 可能设置 innerHTML.
+// 这可能来自于在 render 中明确使用 v-html 或 innerHTML 作为 prop。
 import { warn } from '@vue/runtime-core'
 
-// functions. The user is responsible for using them with only trusted content.
+// 函数. 用户只负责使用可信的内容。
 export function patchDOMProp(
   el: any,
   key: string,

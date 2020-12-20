@@ -45,7 +45,7 @@ export { defineComponent } from './apiDefineComponent'
 export { defineAsyncComponent } from './apiAsyncComponent'
 export { defineOptions } from './apiDefineOptions'
 
-// Advanced API ----------------------------------------------------------------
+// 高阶 API ----------------------------------------------------------------
 
 // For getting a hold of the internal instance in setup() - useful for advanced
 // plugins

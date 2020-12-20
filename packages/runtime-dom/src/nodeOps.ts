@@ -50,10 +50,10 @@ export const nodeOps: Omit<RendererOptions<Node, Element>, 'patchProp'> = {
     return el.cloneNode(true)
   },
 
-  // __UNSAFE__
-  // Reason: innerHTML.
-  // Static content here can only come from compiled templates.
-  // As long as the user only uses trusted templates, this is safe.
+  // __UNSAFE__ 不安全
+  // 原因: innerHTML.
+  // 这里的静态内容只能来自于编译的模板。
+  // 只要用户只使用可信的模板，这就是安全的
   insertStaticContent(content, parent, anchor, isSVG) {
     const temp = isSVG
       ? tempSVGContainer ||
