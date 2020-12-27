@@ -80,7 +80,7 @@ function resolveAsset(
     }
 
     const res =
-      // local registration
+      // 本地注册
       // check instance[type] first for components with mixin or extends.
       resolve(instance[type] || (Component as ComponentOptions)[type], name) ||
       // global registration

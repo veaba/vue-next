@@ -30,9 +30,7 @@ type OptionalOptions = 'isNativeTag' | 'isBuiltInComponent'
 type MergedParserOptions = Omit<Required<ParserOptions>, OptionalOptions> &
   Pick<ParserOptions, OptionalOptions>
 
-// The default decoder only provides escapes for characters reserved as part of
-// the template syntax, and is only used if the custom renderer did not provide
-// a platform-specific decoder.
+// 默认的解码器只为模板语法中保留的字符提供转义，只有当自定义渲染器没有提供特定平台的解码器时才会使用。
 const decodeRE = /&(gt|lt|amp|apos|quot);/g
 const decodeMap: Record<string, string> = {
   gt: '>',

@@ -18,7 +18,7 @@ describe('shallowReactive', () => {
       const shallowSet = shallowReactive(new Set())
       const a = {}
       let size
-
+      console.info('shallowSet=>', shallowSet)
       effect(() => {
         size = shallowSet.size
       })

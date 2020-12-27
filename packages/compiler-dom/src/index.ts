@@ -32,8 +32,8 @@ export const DOMDirectiveTransforms: Record<string, DirectiveTransform> = {
   cloak: noopDirectiveTransform,
   html: transformVHtml,
   text: transformVText,
-  model: transformModel, // override compiler-core
-  on: transformOn, // override compiler-core
+  model: transformModel, // 覆盖 compiler-core
+  on: transformOn, // 覆盖 compiler-core
   show: transformShow
 }
 
@@ -45,7 +45,7 @@ export function compile(
     template,
     extend({}, parserOptions, options, {
       nodeTransforms: [
-        // ignore <script> and <tag>
+        // 忽略 <script> 和 <tag>
         // this is not put inside DOMNodeTransforms because that list is used
         // by compiler-ssr to generate vnode fallback branches
         ignoreSideEffectTags,
